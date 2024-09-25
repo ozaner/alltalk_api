@@ -71,6 +71,111 @@ impl Client {
 
         res.json().await
     }
+
+    pub async fn stop_generation(&self) -> reqwest::Result<bool> {
+        let res = self
+            .client
+            .put(self.address.join("api/stop-generation").unwrap())
+            .send()
+            .await?;
+
+        #[derive(Deserialize)]
+        struct Response {
+            message: String,
+        }
+
+        let res: Response = res.json().await?;
+        Ok(res.message == "Cancelling current TTS generation")
+    }
+
+    pub async fn reload_config(&self) -> reqwest::Result<bool> {
+        let res = self
+            .client
+            .put(self.address.join("api/reload-config").unwrap())
+            .send()
+            .await?;
+
+        Ok(res.text().await? == "Config file reloaded successfully")
+    }
+
+    pub async fn set_model(&self, model: impl AsRef<str>) -> reqwest::Result<bool> {
+        let res = self
+            .client
+            .put(self.address.join("api/reload").unwrap())
+            .query(&[("tts_method", model.as_ref())])
+            .send()
+            .await?;
+
+        #[derive(Deserialize)]
+        struct Response {
+            status: String,
+        }
+
+        let res: Response = res.json().await?;
+        Ok(res.status == "model-success")
+    }
+
+    pub async fn set_deepspeed(&self, enable: bool) -> reqwest::Result<SetValueResponse> {
+        let res = self
+            .client
+            .post(self.address.join("api/deepspeed").unwrap())
+            .query(&[("new_deepspeed_value", if enable { "True" } else { "False" })])
+            .send()
+            .await?;
+
+        #[derive(Deserialize)]
+        struct Response {
+            status: String,
+            message: Option<String>,
+        }
+
+        let res: Response = res.json().await?;
+        let success = res.status.ends_with("success");
+        if success {
+            Ok(SetValueResponse::Success(if let Some(msg) = res.message {
+                if enable {
+                    msg == "DeepSpeed is already enabled."
+                } else {
+                    msg == "DeepSpeed is already disabled."
+                }
+            } else {
+                false
+            }))
+        } else {
+            Ok(SetValueResponse::Error)
+        }
+    }
+
+    pub async fn set_low_vram(&self, enable: bool) -> reqwest::Result<SetValueResponse> {
+        let res = self
+            .client
+            .post(self.address.join("api/lowvramsetting").unwrap())
+            .query(&[("new_low_vram_value", if enable { "True" } else { "False" })])
+            .send()
+            .await?;
+
+        #[derive(Deserialize)]
+        struct Response {
+            status: String,
+            message: Option<String>,
+        }
+
+        let res: Response = res.json().await?;
+        let success = res.status.ends_with("success");
+        if success {
+            Ok(SetValueResponse::Success(if let Some(msg) = res.message {
+                if enable {
+                    msg == "[AllTalk Model] LowVRAM is already enabled."
+                } else {
+                    msg == "[AllTalk Model] LowVRAM is already disabled."
+                }
+            } else {
+                false
+            }))
+        } else {
+            Ok(SetValueResponse::Error)
+        }
+    }
 }
 
 impl Default for Client {
@@ -102,4 +207,10 @@ pub struct Settings {
     pub languages_capable: bool,
     pub multivoice_capable: bool,
     pub multimodel_capable: bool,
+}
+
+#[derive(Debug)]
+pub enum SetValueResponse {
+    Success(bool),
+    Error,
 }
