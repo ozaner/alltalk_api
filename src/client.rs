@@ -1,7 +1,28 @@
+use std::io::Read;
+
 use reqwest::Url;
 use serde::Deserialize;
+use stream_download::{
+    http::HttpStream, storage::memory::MemoryStorageProvider, StreamDownload,
+    StreamInitializationError,
+};
+
+use crate::StreamingSource;
 
 const DEFAULT_ENDPOINT: &str = "http://127.0.0.1:7851";
+const NUM_SECS_PREFETCH: u64 = 1;
+
+pub trait Engine {
+    const SAMPLE_RATE: u32;
+    const CHANNELS: u16;
+}
+
+pub struct XTTS;
+
+impl Engine for XTTS {
+    const SAMPLE_RATE: u32 = 22050;
+    const CHANNELS: u16 = 1;
+}
 
 pub struct Client {
     address: Url,
@@ -18,6 +39,36 @@ impl Client {
             address,
             client: reqwest::Client::new(),
         }
+    }
+
+    pub async fn generate_tts_stream<E: Engine>(
+        &self,
+        text: impl AsRef<str>,
+        voice: impl AsRef<str>,
+        language: impl AsRef<str>,
+    ) -> Result<StreamingSource<impl Read>, StreamInitializationError<HttpStream<reqwest::Client>>>
+    {
+        let mut url = self.address.join("api/tts-generate-streaming").unwrap();
+        url.query_pairs_mut()
+            .append_pair("text", text.as_ref())
+            .append_pair("voice", voice.as_ref())
+            .append_pair("language", language.as_ref())
+            .append_pair("output_file", "stream_output.wav") //no need to change this...
+            .finish();
+
+        //prefetch n seconds of audio before allowing reads
+        let prefetch_bytes = NUM_SECS_PREFETCH
+            * E::CHANNELS as u64
+            * E::SAMPLE_RATE as u64
+            * core::mem::size_of::<i16>() as u64;
+        let reader = StreamDownload::new_http(
+            url,
+            MemoryStorageProvider,
+            stream_download::Settings::default().prefetch_bytes(prefetch_bytes),
+        )
+        .await?;
+
+        Ok(StreamingSource::new(reader, E::SAMPLE_RATE, E::CHANNELS))
     }
 
     pub async fn get_ready(&self) -> reqwest::Result<bool> {
