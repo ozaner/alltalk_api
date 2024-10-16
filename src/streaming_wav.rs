@@ -6,6 +6,7 @@ use std::io::Read;
 use std::time::Duration;
 
 use rodio::Source;
+use thiserror::Error;
 
 /// Wraps a [`Read`] into an audio [`Source`] that can be used with [`rodio`].
 ///
@@ -17,23 +18,17 @@ pub struct StreamingWav<R: Read> {
 }
 
 impl<R: Read> StreamingWav<R> {
-    pub fn new(mut reader: R) -> Result<Self, std::io::Error> {
+    pub fn new(mut reader: R) -> Result<Self, StreamingWavError> {
         // Read the RIFF header
         let mut riff_header = [0u8; 12];
         reader.read_exact(&mut riff_header)?;
 
         // Verify the RIFF and WAVE identifiers
         if &riff_header[0..4] != b"RIFF" {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "File is not a valid RIFF format",
-            ));
+            return Err(StreamingWavError::InvalidRiffFormat);
         }
         if &riff_header[8..12] != b"WAVE" {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "File is not a valid WAVE format",
-            ));
+            return Err(StreamingWavError::InvalidWaveFormat);
         }
 
         let mut sample_rate = 0u32;
@@ -54,10 +49,7 @@ impl<R: Read> StreamingWav<R> {
 
                 let audio_format = u16::from_le_bytes(fmt_chunk[0..2].try_into().unwrap());
                 if audio_format != 1 {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Unsupported audio format (only PCM is supported)",
-                    ));
+                    return Err(StreamingWavError::UnsupportedAudioFormat(audio_format));
                 }
 
                 channels = u16::from_le_bytes(fmt_chunk[2..4].try_into().unwrap());
@@ -65,10 +57,7 @@ impl<R: Read> StreamingWav<R> {
                 let bits_per_sample = u16::from_le_bytes(fmt_chunk[14..16].try_into().unwrap());
 
                 if bits_per_sample != 16 {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Only 16 bits per sample is supported",
-                    ));
+                    return Err(StreamingWavError::UnsupportedBitsPerSample(bits_per_sample));
                 }
             } else if chunk_id == b"data" {
                 // Found the 'data' chunk; ready to read samples
@@ -117,4 +106,22 @@ impl<R: Read> Iterator for StreamingWav<R> {
             Err(_) => None,
         }
     }
+}
+
+#[derive(Debug, Error)]
+pub enum StreamingWavError {
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Invalid RIFF marker")]
+    InvalidRiffFormat,
+
+    #[error("Invalid WAVE marker")]
+    InvalidWaveFormat,
+
+    #[error("Unsupported audio format: {0}")]
+    UnsupportedAudioFormat(u16),
+
+    #[error("Unsupported bits per sample: {0}")]
+    UnsupportedBitsPerSample(u16),
 }
