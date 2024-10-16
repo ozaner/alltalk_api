@@ -1,5 +1,5 @@
 mod client;
-mod streaming_source;
+mod streaming_wav;
 
 pub use client::*;
-pub use streaming_source::*;
+pub use streaming_wav::*;
